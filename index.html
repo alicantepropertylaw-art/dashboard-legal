@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Legal - Auto-Refresh</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { font-family: 'Inter', sans-serif; }
+        body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+        .glass-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.3); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); border-radius: 20px; }
+        .kpi-card { transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); border-left: 5px solid transparent; }
+        .kpi-card:hover { transform: translateY(-5px) scale(1.02); box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15); }
+        .kpi-card.confirmed { border-left-color: #10b981; background: linear-gradient(135deg, #d1fae5 0%, #ffffff 100%); }
+        .kpi-card.pending { border-left-color: #f59e0b; background: linear-gradient(135deg, #fef3c7 0%, #ffffff 100%); }
+        .kpi-card.alert { border-left-color: #ef4444; background: linear-gradient(135deg, #fee2e2 0%, #ffffff 100%); }
+        .kpi-card.info { border-left-color: #3b82f6; background: linear-gradient(135deg, #dbeafe 0%, #ffffff 100%); }
+        .kpi-card.neutral { border-left-color: #6b7280; background: linear-gradient(135deg, #f3f4f6 0%, #ffffff 100%); }
+        .status-badge { padding: 0.35rem 0.9rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .status-confirmed { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        .status-pending { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+        .status-empty { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+        .meeting-card { transition: all 0.3s ease; border-left: 4px solid transparent; position: relative; overflow: hidden; }
+        .meeting-card:hover { transform: translateX(8px); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1); }
+        .meeting-card.today { border-left-color: #10b981; background: rgba(16, 185, 129, 0.05); }
+        .meeting-card.upcoming { border-left-color: #3b82f6; background: rgba(59, 130, 246, 0.05); }
+        .meeting-card.duplicate { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.05); }
+        .duplicate-badge { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .filter-chip { transition: all 0.3s ease; cursor: pointer; border: 2px solid transparent; }
+        .filter-chip:hover { transform: scale(1.05); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .filter-chip.active { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-color: rgba(255,255,255,0.3); box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); }
+        .search-input { transition: all 0.3s ease; border: 2px solid #e5e7eb; }
+        .search-input:focus { border-color: #667eea; box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1); outline: none; }
+        .table-row { transition: all 0.2s ease; }
+        .table-row:hover { background: rgba(102, 126, 234, 0.05); transform: scale(1.01); }
+        .table-row.duplicate-row { background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; }
+        .quality-bar { height: 10px; border-radius: 5px; background: #e5e7eb; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
+        .quality-fill { height: 100%; border-radius: 5px; transition: width 1s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+        .quality-good { background: linear-gradient(90deg, #10b981, #059669); }
+        .quality-warning { background: linear-gradient(90deg, #f59e0b, #d97706); }
+        .quality-bad { background: linear-gradient(90deg, #ef4444, #dc2626); }
+        .chart-container { position: relative; height: 250px; }
+        .loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); display: flex; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(5px); }
+        .loading-spinner { width: 60px; height: 60px; border: 4px solid #e5e7eb; border-top-color: #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .sync-status { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 600; transition: all 0.3s ease; }
+        .sync-status.syncing { background: #dbeafe; color: #1e40af; }
+        .sync-status.synced { background: #d1fae5; color: #065f46; }
+        .sync-status.error { background: #fee2e2; color: #991b1b; }
+        .sync-status.demo { background: #fef3c7; color: #92400e; }
+        .retry-btn { background: #3b82f6; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; cursor: pointer; border: none; margin-top: 1rem; }
+        .retry-btn:hover { background: #2563eb; }
+    </style>
+<base target="_blank">
+</head>
+<body>
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="text-center">
+            <div class="loading-spinner mx-auto mb-4"></div>
+            <p class="text-gray-600 font-semibold" id="loadingText">Cargando datos desde Google Sheets...</p>
+            <button id="retryBtn" class="retry-btn hidden" onclick="forceRefresh()">Reintentar</button>
+        </div>
+    </div>
+
+    <div class="max-w-[1600px] mx-auto">
+        <header class="glass-panel p-6 mb-6">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800 flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white shadow-lg">
+                            <i class="fas fa-balance-scale text-xl"></i>
+                        </div>
+                        <span class="bg-clip-text text-transparent bg-gradient-to-r from-gray-800 to-gray-600">Dashboard Legal</span>
+                    </h1>
+                    <p class="text-gray-500 mt-2 flex items-center gap-2"><i class="fas fa-building"></i>Gestión integral de clientes y reuniones</p>
+                </div>
+                <div class="flex items-center gap-4">
+                    <div id="syncStatus" class="sync-status synced">
+                        <i class="fas fa-check-circle"></i><span>Sincronizado</span>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Última actualización</p>
+                        <p class="text-lg font-bold text-gray-700" id="lastUpdate">--</p>
+                    </div>
+                    <button onclick="forceRefresh()" class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 text-white shadow-lg hover:shadow-xl flex items-center justify-center" title="Forzar actualización">
+                        <i class="fas fa-sync-alt" id="refreshIcon"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+            <div class="glass-panel p-5 kpi-card info">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Registros</p>
+                        <p class="text-4xl font-bold text-gray-800 mt-1" id="kpiTotal">0</p>
+                    </div>
+                    <div class="w-12 h-12 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><i class="fas fa-database text-xl"></i></div>
+                </div>
+            </div>
+            <div class="glass-panel p-5 kpi-card confirmed">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Citas Confirmadas</p>
+                        <p class="text-4xl font-bold text-gray-800 mt-1" id="kpiConfirmadas">0</p>
+                        <p class="text-xs text-green-600 mt-1 font-bold" id="kpiPctConfirmadas">0%</p>
+                    </div>
+                    <div class="w-12 h-12 rounded-xl bg-green-100 text-green-600 flex items-center justify-center"><i class="fas fa-calendar-check text-xl"></i></div>
+                </div>
+            </div>
+            <div class="glass-panel p-5 kpi-card pending">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Próximas Citas</p>
+                        <p class="text-4xl font-bold text-gray-800 mt-1" id="kpiProximas">0</p>
+                    </div>
+                    <div class="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fas fa-clock text-xl"></i></div>
+                </div>
+            </div>
+            <div class="glass-panel p-5 kpi-card alert">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Duplicados</p>
+                        <p class="text-4xl font-bold text-gray-800 mt-1" id="kpiDuplicados">0</p>
+                    </div>
+                    <div class="w-12 h-12 rounded-xl bg-red-100 text-red-600 flex items-center justify-center"><i class="fas fa-clone text-xl"></i></div>
+                </div>
+            </div>
+            <div class="glass-panel p-5 kpi-card neutral">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Sin Cita</p>
+                        <p class="text-4xl font-bold text-gray-800 mt-1" id="kpiSinCita">0</p>
+                    </div>
+                    <div class="w-12 h-12 rounded-xl bg-gray-100 text-gray-600 flex items-center justify-center"><i class="fas fa-calendar-times text-xl"></i></div>
+                </div>
+            </div>
+            <div class="glass-panel p-5 kpi-card info">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Con Booking UID</p>
+                        <p class="text-4xl font-bold text-gray-800 mt-1" id="kpiBooking">0</p>
+                    </div>
+                    <div class="w-12 h-12 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><i class="fas fa-ticket-alt text-xl"></i></div>
+                </div>
+            </div>
+            <div class="glass-panel p-5 kpi-card alert">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Sin Correo</p>
+                        <p class="text-4xl font-bold text-gray-800 mt-1" id="kpiSinCorreo">0</p>
+                    </div>
+                    <div class="w-12 h-12 rounded-xl bg-red-100 text-red-600 flex items-center justify-center"><i class="fas fa-envelope-slash text-xl"></i></div>
+                </div>
+            </div>
+            <div class="glass-panel p-5 kpi-card pending">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Calidad Datos</p>
+                        <p class="text-4xl font-bold text-gray-800 mt-1" id="kpiCalidad">0%</p>
+                    </div>
+                    <div class="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fas fa-shield-alt text-xl"></i></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="alertBanner" class="hidden mb-6">
+            <div class="glass-panel p-4 border-l-4 border-red-500 bg-red-50">
+                <div class="flex items-center gap-3">
+                    <i class="fas fa-exclamation-triangle text-red-500 text-xl"></i>
+                    <div>
+                        <p class="font-bold text-red-800">Alertas detectadas</p>
+                        <p class="text-sm text-red-600" id="alertText"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel p-4 mb-6">
+            <div class="flex flex-wrap items-center gap-3">
+                <span class="text-sm font-bold text-gray-600 flex items-center gap-2"><i class="fas fa-filter text-purple-500"></i>Filtros:</span>
+                <button class="filter-chip px-4 py-2 rounded-full bg-gray-100 text-sm font-semibold text-gray-700 active" data-filter="all" onclick="setFilter('all')"><i class="fas fa-list mr-1"></i>Todos</button>
+                <button class="filter-chip px-4 py-2 rounded-full bg-gray-100 text-sm font-semibold text-gray-700" data-filter="confirmed" onclick="setFilter('confirmed')"><i class="fas fa-check-circle mr-1"></i>Confirmadas</button>
+                <button class="filter-chip px-4 py-2 rounded-full bg-gray-100 text-sm font-semibold text-gray-700" data-filter="today" onclick="setFilter('today')"><i class="fas fa-calendar-day mr-1"></i>Hoy</button>
+                <button class="filter-chip px-4 py-2 rounded-full bg-gray-100 text-sm font-semibold text-gray-700" data-filter="upcoming" onclick="setFilter('upcoming')"><i class="fas fa-arrow-right mr-1"></i>Próximas</button>
+                <button class="filter-chip px-4 py-2 rounded-full bg-gray-100 text-sm font-semibold text-gray-700" data-filter="duplicates" onclick="setFilter('duplicates')"><i class="fas fa-clone mr-1"></i>Duplicados</button>
+                <button class="filter-chip px-4 py-2 rounded-full bg-gray-100 text-sm font-semibold text-gray-700" data-filter="incomplete" onclick="setFilter('incomplete')"><i class="fas fa-exclamation-triangle mr-1"></i>Incompletos</button>
+                <div class="flex-1"></div>
+                <div class="relative">
+                    <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                    <input type="text" id="searchInput" placeholder="Buscar cliente, teléfono..." class="search-input pl-10 pr-4 py-2 rounded-xl w-full md:w-80 text-sm" onkeyup="handleSearch()">
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div class="lg:col-span-2 glass-panel p-6">
+                <div class="flex justify-between items-center mb-5">
+                    <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white"><i class="fas fa-calendar-alt"></i></div>
+                        Agenda de Reuniones
+                    </h2>
+                    <div class="flex gap-2">
+                        <button onclick="sortMeetings('date')" class="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-semibold transition-colors flex items-center gap-2"><i class="fas fa-sort"></i>Fecha</button>
+                        <button onclick="sortMeetings('status')" class="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-semibold transition-colors flex items-center gap-2"><i class="fas fa-sort"></i>Estado</button>
+                    </div>
+                </div>
+                <div id="meetingsList" class="space-y-3" style="max-height: 500px; overflow-y: auto;"></div>
+            </div>
+
+            <div class="glass-panel p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-5 flex items-center gap-2">
+                    <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-white"><i class="fas fa-shield-alt"></i></div>
+                    Calidad de Datos
+                </h2>
+                <div id="dataQualityPanel" class="space-y-4 mb-6"></div>
+                <div class="border-t border-gray-200 pt-4">
+                    <h3 class="text-sm font-bold text-gray-600 mb-3 flex items-center gap-2"><i class="fas fa-exclamation-circle text-red-500"></i>Problemas Detectados</h3>
+                    <div id="issuesList" class="space-y-2 text-sm"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+            <div class="glass-panel p-5">
+                <h3 class="text-sm font-bold text-gray-600 mb-4 flex items-center gap-2"><i class="fas fa-chart-pie text-blue-500"></i>Estado de Citas</h3>
+                <div class="chart-container"><canvas id="chartStatus"></canvas></div>
+            </div>
+            <div class="glass-panel p-5">
+                <h3 class="text-sm font-bold text-gray-600 mb-4 flex items-center gap-2"><i class="fas fa-globe text-green-500"></i>Clientes por País</h3>
+                <div class="chart-container"><canvas id="chartCountries"></canvas></div>
+            </div>
+            <div class="glass-panel p-5">
+                <h3 class="text-sm font-bold text-gray-600 mb-4 flex items-center gap-2"><i class="fas fa-tasks text-purple-500"></i>Por Motivo</h3>
+                <div class="chart-container"><canvas id="chartMotives"></canvas></div>
+            </div>
+            <div class="glass-panel p-5">
+                <h3 class="text-sm font-bold text-gray-600 mb-4 flex items-center gap-2"><i class="fas fa-chart-line text-amber-500"></i>Timeline</h3>
+                <div class="chart-container"><canvas id="chartTimeline"></canvas></div>
+            </div>
+        </div>
+
+        <div class="glass-panel p-6 mb-6">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-5">
+                <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                    <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-teal-600 flex items-center justify-center text-white"><i class="fas fa-users"></i></div>
+                    Directorio de Clientes
+                </h2>
+                <div class="flex gap-2 flex-wrap">
+                    <select id="filterPais" onchange="applyFilters()" class="px-4 py-2 rounded-lg border-2 border-gray-200 text-sm font-medium focus:border-purple-500 focus:outline-none"><option value="">Todos los países</option></select>
+                    <select id="filterMotivo" onchange="applyFilters()" class="px-4 py-2 rounded-lg border-2 border-gray-200 text-sm font-medium focus:border-purple-500 focus:outline-none"><option value="">Todos los motivos</option></select>
+                </div>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-gray-200">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="p-4 font-bold text-gray-600 text-sm border-b border-gray-200">Cliente</th>
+                            <th class="p-4 font-bold text-gray-600 text-sm border-b border-gray-200">Contacto</th>
+                            <th class="p-4 font-bold text-gray-600 text-sm border-b border-gray-200">País</th>
+                            <th class="p-4 font-bold text-gray-600 text-sm border-b border-gray-200">Motivo</th>
+                            <th class="p-4 font-bold text-gray-600 text-sm border-b border-gray-200">Próxima Cita</th>
+                            <th class="p-4 font-bold text-gray-600 text-sm border-b border-gray-200">Estado</th>
+                            <th class="p-4 font-bold text-gray-600 text-sm border-b border-gray-200">Alertas</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clientsTableBody" class="divide-y divide-gray-100"></tbody>
+                </table>
+            </div>
+            <div class="mt-4 flex justify-between items-center">
+                <p class="text-sm text-gray-500 font-medium" id="tableInfo">Mostrando 0 de 0 registros</p>
+                <div class="flex gap-2">
+                    <button onclick="changePage(-1)" class="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 font-semibold" id="btnPrev"><i class="fas fa-chevron-left"></i></button>
+                    <span class="px-4 py-2 text-sm font-bold text-gray-700 bg-gray-50 rounded-lg" id="pageInfo">Página 1</span>
+                    <button onclick="changePage(1)" class="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-50 font-semibold" id="btnNext"><i class="fas fa-chevron-right"></i></button>
+                </div>
+            </div>
+        </div>
+
+        <footer class="text-center text-white/80 text-sm py-4">
+            <p>Dashboard Legal Auto-Refresh • <span id="footerDate"></span></p>
+        </footer>
+    </div>
+
+    <script>
+        // CONFIGURACIÓN - TU URL DE GOOGLE SHEETS
+        const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQkUSJ6ekHkVg9XVLwS38QUkYmjRKa7cI42QjLabxWXawiwQ87djSnjbXcn_RLXpKGH2fXYfWnDjDDi/pub?output=csv';
+        
+        // Lista de proxies CORS alternativos
+        const PROXY_URLS = [
+            'https://api.allorigins.win/get?url=',
+            'https://corsproxy.io/?',
+            'https://api.codetabs.com/v1/proxy?quest='
+        ];
+        
+        const AUTO_REFRESH_INTERVAL = 300000; // 5 minutos
+
+        let dashboardData = [], filteredData = [], currentPage = 1, itemsPerPage = 10;
+        let currentFilter = 'all', currentSort = { field: 'fecha_parseada', direction: 'asc' };
+        let autoRefreshTimer = null, charts = {}, stats = {};
+        let currentProxyIndex = 0;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            initDashboard();
+        });
+
+        async function initDashboard() {
+            await loadDataWithFallback();
+            startAutoRefresh();
+            document.getElementById('footerDate').textContent = new Date().getFullYear();
+        }
+
+        async function loadDataWithFallback() {
+            const syncStatus = document.getElementById('syncStatus');
+            const loadingText = document.getElementById('loadingText');
+            const retryBtn = document.getElementById('retryBtn');
+            
+            syncStatus.className = 'sync-status syncing';
+            syncStatus.innerHTML = '<i class="fas fa-sync fa-spin"></i><span>Sincronizando...</span>';
+            retryBtn.classList.add('hidden');
+
+            // Intentar con cada proxy hasta que uno funcione
+            for (let i = 0; i < PROXY_URLS.length; i++) {
+                try {
+                    currentProxyIndex = i;
+                    const proxyUrl = PROXY_URLS[i] + encodeURIComponent(CSV_URL);
+                    
+                    console.log(`Intentando con proxy ${i + 1}/${PROXY_URLS.length}...`);
+                    loadingText.textContent = `Cargando datos (intento ${i + 1}/${PROXY_URLS.length})...`;
+                    
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
+                    
+                    const response = await fetch(proxyUrl, { signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    
+                    let csvText;
+                    
+                    // Manejar diferentes formatos de respuesta de proxies
+                    if (i === 0) { // allorigins
+                        const data = await response.json();
+                        csvText = data.contents;
+                    } else {
+                        csvText = await response.text();
+                    }
+                    
+                    if (!csvText || csvText.trim().length === 0) {
+                        throw new Error('Respuesta vacía');
+                    }
+                    
+                    // Verificar que es CSV válido
+                    if (!csvText.includes(',') && !csvText.includes('\n')) {
+                        throw new Error('Formato inválido');
+                    }
+                    
+                    // Procesar datos
+                    Papa.parse(csvText, {
+                        header: true,
+                        skipEmptyLines: true,
+                        dynamicTyping: true,
+                        complete: function(results) {
+                            if (results.data && results.data.length > 0) {
+                                console.log(`✅ Datos cargados exitosamente con proxy ${i + 1}`);
+                                processAndDisplayData(results.data);
+                                hideLoading();
+                                updateSyncStatus('synced', 'Sincronizado');
+                                return;
+                            } else {
+                                throw new Error('No hay datos en el CSV');
+                            }
+                        },
+                        error: function(error) {
+                            throw error;
+                        }
+                    });
+                    
+                    return; // Éxito, salir de la función
+                    
+                } catch (error) {
+                    console.error(`❌ Proxy ${i + 1} falló:`, error.message);
+                    continue; // Intentar siguiente proxy
+                }
+            }
+            
+            // Si llegamos aquí, todos los proxies fallaron
+            console.warn('⚠️ Todos los proxies fallaron, usando datos de demo');
+            useDemoData();
+            hideLoading();
+            updateSyncStatus('demo', 'Modo Demo - Datos de prueba');
+            retryBtn.classList.remove('hidden');
+        }
+
+        function updateSyncStatus(type, text) {
+            const syncStatus = document.getElementById('syncStatus');
+            const icons = {
+                synced: 'fa-check-circle',
+                demo: 'fa-database',
+                error: 'fa-exclamation-circle',
+                syncing: 'fa-sync fa-spin'
+            };
+            syncStatus.className = `sync-status ${type}`;
+            syncStatus.innerHTML = `<i class="fas ${icons[type] || 'fa-info-circle'}"></i><span>${text}</span>`;
+            
+            if (type === 'synced') {
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleString('es-ES', { 
+                    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' 
+                });
+            }
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+
+        function processAndDisplayData(rawData) {
+            dashboardData = rawData.map((row, index) => processRow(row, index));
+            filteredData = [...dashboardData];
+            updateDashboard();
+        }
+
+        function processRow(row, index) {
+            const issues = [];
+
+            // Teléfono
+            let telefonoNormalizado = null, telefonoStatus = 'ok';
+            if (row.telefono) {
+                const cleaned = String(row.telefono).replace(/[\s\-\+]/g, '');
+                if (/^\d+$/.test(cleaned)) {
+                    if (cleaned.startsWith('34') && cleaned.length === 11) {
+                        telefonoNormalizado = `+${cleaned.slice(0,2)} ${cleaned.slice(2,5)} ${cleaned.slice(5,8)} ${cleaned.slice(8)}`;
+                    } else if (cleaned.length === 9) {
+                        telefonoNormalizado = `+34 ${cleaned.slice(0,3)} ${cleaned.slice(3,6)} ${cleaned.slice(6)}`;
+                    } else {
+                        telefonoNormalizado = cleaned;
+                    }
+                } else {
+                    telefonoStatus = 'invalid';
+                    issues.push('Teléfono inválido');
+                }
+            } else {
+                telefonoStatus = 'missing';
+            }
+
+            // Email
+            let correoNormalizado = null, correoStatus = 'ok';
+            if (row.correo) {
+                let email = String(row.correo).toLowerCase().trim().replace(/arroba/g, '@').replace(/punto/g, '.').replace(/\s/g, '');
+                if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                    correoNormalizado = email;
+                } else {
+                    correoStatus = 'invalid';
+                    issues.push('Email inválido');
+                }
+            } else {
+                correoStatus = 'missing';
+                issues.push('Sin correo');
+            }
+
+            // Fecha
+            let fechaParseada = null, fechaStatus = 'ok';
+            if (row.fecha_cita) {
+                let d = new Date(row.fecha_cita);
+                if (!isNaN(d.getTime())) {
+                    fechaParseada = d.toISOString().slice(0, 16).replace('T', ' ');
+                } else {
+                    const match = String(row.fecha_cita).match(/(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/);
+                    if (match) {
+                        d = new Date(`${match[1]}T${match[2]}:00`);
+                        if (!isNaN(d.getTime())) fechaParseada = d.toISOString().slice(0, 16).replace('T', ' ');
+                    }
+                    if (!fechaParseada) {
+                        fechaStatus = 'unparseable';
+                        issues.push('Fecha no parseable');
+                    }
+                }
+            } else {
+                fechaStatus = 'missing';
+            }
+
+            return {
+                id: index,
+                telefono: row.telefono ? String(row.telefono) : '',
+                telefonoNormalizado,
+                telefonoStatus,
+                nombre: row.nombre ? String(row.nombre) : '',
+                correo: row.correo ? String(row.correo) : '',
+                correoNormalizado,
+                correoStatus,
+                pais: row.pais ? String(row.pais) : 'Desconocido',
+                motivo: row.motivo ? String(row.motivo) : '',
+                booking_uid: row.booking_uid ? String(row.booking_uid) : '',
+                fecha_cita: row.fecha_cita ? String(row.fecha_cita) : '',
+                fecha_parseada: fechaParseada,
+                fechaStatus,
+                cita_confirmada: row.cita_confirmada === true || String(row.cita_confirmada).toUpperCase() === 'TRUE',
+                issues,
+                esDuplicado: false
+            };
+        }
+
+        function detectDuplicates() {
+            const phones = new Map(), emails = new Map(), names = new Map();
+            dashboardData.forEach((client, idx) => {
+                if (client.telefonoNormalizado) {
+                    if (phones.has(client.telefonoNormalizado)) {
+                        dashboardData[phones.get(client.telefonoNormalizado)].esDuplicado = true;
+                        client.esDuplicado = true;
+                        client.issues.push('Teléfono duplicado');
+                    } else phones.set(client.telefonoNormalizado, idx);
+                }
+                if (client.correoNormalizado) {
+                    if (emails.has(client.correoNormalizado)) {
+                        dashboardData[emails.get(client.correoNormalizado)].esDuplicado = true;
+                        client.esDuplicado = true;
+                        client.issues.push('Email duplicado');
+                    } else emails.set(client.correoNormalizado, idx);
+                }
+                if (client.nombre) {
+                    const nameKey = client.nombre.trim().toLowerCase();
+                    if (names.has(nameKey)) {
+                        dashboardData[names.get(nameKey)].esDuplicado = true;
+                        client.esDuplicado = true;
+                        client.issues.push('Nombre duplicado');
+                    } else names.set(nameKey, idx);
+                }
+            });
+        }
+
+        function updateDashboard() {
+            detectDuplicates();
+            calculateStats();
+            updateKPIs();
+            checkAlerts();
+            updateCharts();
+            updateMeetingsList();
+            updateDataQuality();
+            updateClientsTable();
+            populateFilters();
+        }
+
+        function calculateStats() {
+            const total = dashboardData.length;
+            const conCita = dashboardData.filter(d => d.fecha_parseada).length;
+            const confirmadas = dashboardData.filter(d => d.cita_confirmada).length;
+            const ahora = new Date();
+
+            stats = {
+                totalRegistros: total,
+                conCita,
+                sinCita: total - conCita,
+                confirmadas,
+                pendientes: conCita - confirmadas,
+                proximas: dashboardData.filter(d => d.fecha_parseada && new Date(d.fecha_parseada) >= ahora).length,
+                duplicados: dashboardData.filter(d => d.esDuplicado).length,
+                conBooking: dashboardData.filter(d => d.booking_uid).length,
+                sinCorreo: dashboardData.filter(d => !d.correo).length,
+                telefonosOk: dashboardData.filter(d => d.telefonoStatus === 'ok').length,
+                correosOk: dashboardData.filter(d => d.correoStatus === 'ok').length,
+                fechasOk: dashboardData.filter(d => d.fechaStatus === 'ok').length,
+                distribucionPais: {},
+                distribucionMotivo: {}
+            };
+
+            dashboardData.forEach(d => {
+                if (d.pais) stats.distribucionPais[d.pais] = (stats.distribucionPais[d.pais] || 0) + 1;
+                if (d.motivo) stats.distribucionMotivo[d.motivo] = (stats.distribucionMotivo[d.motivo] || 0) + 1;
+            });
+
+            stats.pctConfirmadas = conCita > 0 ? Math.round((confirmadas / conCita) * 100) : 0;
+            stats.calidad = Math.max(0, 100 - (stats.sinCorreo / total * 100) - (stats.duplicados / total * 10));
+        }
+
+        function updateKPIs() {
+            document.getElementById('kpiTotal').textContent = stats.totalRegistros;
+            document.getElementById('kpiConfirmadas').textContent = stats.confirmadas;
+            document.getElementById('kpiPctConfirmadas').textContent = stats.pctConfirmadas + '% de ' + stats.conCita + ' citas';
+            document.getElementById('kpiProximas').textContent = stats.proximas;
+            document.getElementById('kpiDuplicados').textContent = stats.duplicados;
+            document.getElementById('kpiSinCita').textContent = stats.sinCita;
+            document.getElementById('kpiBooking').textContent = stats.conBooking;
+            document.getElementById('kpiSinCorreo').textContent = stats.sinCorreo;
+            document.getElementById('kpiCalidad').textContent = Math.round(stats.calidad) + '%';
+        }
+
+        function checkAlerts() {
+            const alerts = [];
+            if (stats.duplicados > 0) alerts.push(`${stats.duplicados} duplicados detectados`);
+            if (stats.sinCorreo > 0) alerts.push(`${stats.sinCorreo} sin correo`);
+            if (stats.pendientes > 0) alerts.push(`${stats.pendientes} citas pendientes`);
+
+            const banner = document.getElementById('alertBanner');
+            if (alerts.length > 0) {
+                banner.classList.remove('hidden');
+                document.getElementById('alertText').textContent = alerts.join(' • ');
+            } else banner.classList.add('hidden');
+        }
+
+        function startAutoRefresh() {
+            if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+            autoRefreshTimer = setInterval(() => loadDataWithFallback(), AUTO_REFRESH_INTERVAL);
+        }
+
+        function forceRefresh() {
+            const icon = document.getElementById('refreshIcon');
+            icon.classList.add('fa-spin');
+            document.getElementById('loadingOverlay').style.display = 'flex';
+            loadDataWithFallback().then(() => setTimeout(() => icon.classList.remove('fa-spin'), 1000));
+        }
+
+        function useDemoData() {
+            const demoData = [
+                {telefono: "34667671003", nombre: "Superman", correo: "", pais: "Nigeria", motivo: "conveyancing", booking_uid: "", fecha_cita: "", cita_confirmada: false},
+                {telefono: "34667671003", nombre: "Superman", correo: "", pais: "Nigeria", motivo: "conveyancing", booking_uid: "", fecha_cita: "", cita_confirmada: false},
+                {telefono: "34667671003", nombre: "Spiderman", correo: "", pais: "Mali", motivo: "conveyancing", booking_uid: "", fecha_cita: "2026-04-21T18:00:00", cita_confirmada: true},
+                {telefono: "34667671003", nombre: "Captain America", correo: "name@example.com", pais: "Ireland", motivo: "consultation (con consulta breve)", booking_uid: "", fecha_cita: "2026-04-14T09:00:00", cita_confirmada: true},
+                {telefono: "34610675727", nombre: "Miguel", correo: "migtar@gmail.com", pais: "Spain", motivo: "", booking_uid: "eEDMUvoqiPZiF39c1tYnx2", fecha_cita: "", cita_confirmada: false}
+            ];
+            dashboardData = demoData.map((row, index) => processRow(row, index));
+            filteredData = [...dashboardData];
+            updateDashboard();
+        }
+
+        // Filtros y UI
+        function setFilter(filter) {
+            currentFilter = filter;
+            currentPage = 1;
+            document.querySelectorAll('.filter-chip').forEach(chip => {
+                chip.classList.remove('active');
+                if (chip.dataset.filter === filter) chip.classList.add('active');
+            });
+            applyFilters();
+        }
+
+        function applyFilters() {
+            let data = [...dashboardData];
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+            switch(currentFilter) {
+                case 'confirmed': data = data.filter(d => d.cita_confirmada); break;
+                case 'today': data = data.filter(d => d.fecha_parseada && new Date(d.fecha_parseada) >= today && new Date(d.fecha_parseada) < new Date(today.getTime() + 24*60*60*1000)); break;
+                case 'upcoming': data = data.filter(d => d.fecha_parseada && new Date(d.fecha_parseada) >= today); break;
+                case 'duplicates': data = data.filter(d => d.esDuplicado); break;
+                case 'incomplete': data = data.filter(d => !d.correo || d.correoStatus !== 'ok'); break;
+            }
+
+            const pais = document.getElementById('filterPais').value;
+            const motivo = document.getElementById('filterMotivo').value;
+            if (pais) data = data.filter(d => d.pais === pais);
+            if (motivo) data = data.filter(d => d.motivo === motivo);
+
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            if (searchTerm) {
+                data = data.filter(d => 
+                    (d.nombre && d.nombre.toLowerCase().includes(searchTerm)) ||
+                    (d.telefono && d.telefono.toLowerCase().includes(searchTerm)) ||
+                    (d.correo && d.correo.toLowerCase().includes(searchTerm))
+                );
+            }
+
+            data.sort((a, b) => {
+                let valA = a[currentSort.field], valB = b[currentSort.field];
+                if (currentSort.field === 'fecha_parseada') {
+                    valA = valA ? new Date(valA) : new Date('9999-12-31');
+                    valB = valB ? new Date(valB) : new Date('9999-12-31');
+                }
+                if (valA < valB) return currentSort.direction === 'asc' ? -1 : 1;
+                if (valA > valB) return currentSort.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            filteredData = data;
+            updateMeetingsList();
+            updateClientsTable();
+        }
+
+        function handleSearch() { applyFilters(); }
+        function sortMeetings(field) {
+            if (currentSort.field === field) currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+            else { currentSort.field = field; currentSort.direction = 'asc'; }
+            applyFilters();
+        }
+
+        function updateMeetingsList() {
+            const container = document.getElementById('meetingsList');
+            const now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            let meetings = filteredData.filter(d => d.fecha_parseada);
+
+            if (meetings.length === 0) {
+                container.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-calendar-times text-4xl mb-3"></i><p>No hay reuniones</p></div>';
+                return;
+            }
+
+            container.innerHTML = meetings.map(meeting => {
+                const meetingDate = new Date(meeting.fecha_parseada);
+                const isToday = meetingDate >= today && meetingDate < new Date(today.getTime() + 24*60*60*1000);
+                const isPast = meetingDate < today;
+                let statusClass = isToday ? 'today' : (isPast ? 'past' : 'upcoming');
+                if (meeting.esDuplicado) statusClass += ' duplicate';
+
+                return `<div class="meeting-card glass-panel rounded-xl p-4 ${statusClass}">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-2">
+                                <h4 class="font-bold text-gray-800 text-lg">${meeting.nombre || 'Sin nombre'}</h4>
+                                ${meeting.esDuplicado ? '<span class="duplicate-badge"><i class="fas fa-clone mr-1"></i>Duplicado</span>' : ''}
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-sm mb-3">
+                                <div class="flex items-center gap-2 text-gray-600">
+                                    <i class="fas fa-phone text-blue-400"></i>
+                                    <span class="font-mono">${meeting.telefonoNormalizado || meeting.telefono || 'N/A'}</span>
+                                </div>
+                                <div class="flex items-center gap-2 ${meeting.correo ? 'text-gray-600' : 'text-red-400'}">
+                                    <i class="fas fa-envelope ${meeting.correo ? 'text-green-400' : 'text-red-400'}"></i>
+                                    <span>${meeting.correo || 'Sin correo'}</span>
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-3 text-sm">
+                                <span class="font-bold text-gray-700 bg-gray-100 px-3 py-1 rounded-lg">
+                                    <i class="fas fa-calendar mr-1 text-blue-500"></i>
+                                    ${meetingDate.toLocaleDateString('es-ES', {weekday: 'short', day: 'numeric', month: 'short'})}
+                                </span>
+                                <span class="font-bold text-gray-700 bg-gray-100 px-3 py-1 rounded-lg">
+                                    <i class="fas fa-clock mr-1 text-purple-500"></i>
+                                    ${meetingDate.toLocaleTimeString('es-ES', {hour: '2-digit', minute: '2-digit'})}
+                                </span>
+                                ${meeting.pais ? `<span class="px-3 py-1 rounded-lg bg-blue-50 text-blue-700 font-semibold text-xs"><i class="fas fa-globe mr-1"></i>${meeting.pais}</span>` : ''}
+                                ${meeting.motivo ? `<span class="px-3 py-1 rounded-lg bg-purple-50 text-purple-700 font-semibold text-xs">${meeting.motivo}</span>` : ''}
+                            </div>
+                        </div>
+                        <div class="text-right flex flex-col items-end gap-2">
+                            ${isToday ? '<span class="text-green-600 font-bold text-xs uppercase tracking-wider">Hoy</span>' : isPast ? '<span class="text-gray-400 text-xs">Pasada</span>' : '<span class="text-blue-600 font-bold text-xs uppercase tracking-wider">Próxima</span>'}
+                            <div class="mt-1">${meeting.cita_confirmada ? '<span class="status-badge status-confirmed"><i class="fas fa-check mr-1"></i>Confirmada</span>' : '<span class="status-badge status-pending"><i class="fas fa-clock mr-1"></i>Pendiente</span>'}</div>
+                            ${meeting.booking_uid ? `<p class="text-xs text-gray-400 font-mono mt-1 bg-gray-100 px-2 py-1 rounded">${meeting.booking_uid}</p>` : ''}
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function updateDataQuality() {
+            const container = document.getElementById('dataQualityPanel');
+            const issuesContainer = document.getElementById('issuesList');
+            const total = stats.totalRegistros;
+
+            const telefonoOk = total > 0 ? Math.round((stats.telefonosOk / total) * 100) : 0;
+            const correoOk = total > 0 ? Math.round((stats.correosOk / total) * 100) : 0;
+            const fechaOk = stats.conCita > 0 ? Math.round((stats.fechasOk / stats.conCita) * 100) : 100;
+
+            container.innerHTML = `
+                <div class="flex items-center gap-3 p-3 rounded-lg bg-white/50">
+                    <div class="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center"><i class="fas fa-phone"></i></div>
+                    <div class="flex-1">
+                        <div class="flex justify-between mb-1">
+                            <span class="text-sm font-bold text-gray-700">Teléfonos</span>
+                            <span class="text-sm font-bold ${telefonoOk > 80 ? 'text-green-600' : 'text-amber-600'}">${telefonoOk}%</span>
+                        </div>
+                        <div class="quality-bar"><div class="quality-fill ${telefonoOk > 80 ? 'quality-good' : (telefonoOk > 50 ? 'quality-warning' : 'quality-bad')}" style="width: ${telefonoOk}%"></div></div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 p-3 rounded-lg bg-white/50">
+                    <div class="w-10 h-10 rounded-lg bg-green-100 text-green-600 flex items-center justify-center"><i class="fas fa-envelope"></i></div>
+                    <div class="flex-1">
+                        <div class="flex justify-between mb-1">
+                            <span class="text-sm font-bold text-gray-700">Correos</span>
+                            <span class="text-sm font-bold ${correoOk > 80 ? 'text-green-600' : 'text-amber-600'}">${correoOk}%</span>
+                        </div>
+                        <div class="quality-bar"><div class="quality-fill ${correoOk > 80 ? 'quality-good' : (correoOk > 50 ? 'quality-warning' : 'quality-bad')}" style="width: ${correoOk}%"></div></div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 p-3 rounded-lg bg-white/50">
+                    <div class="w-10 h-10 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center"><i class="fas fa-calendar"></i></div>
+                    <div class="flex-1">
+                        <div class="flex justify-between mb-1">
+                            <span class="text-sm font-bold text-gray-700">Fechas</span>
+                            <span class="text-sm font-bold ${fechaOk > 80 ? 'text-green-600' : 'text-amber-600'}">${fechaOk}%</span>
+                        </div>
+                        <div class="quality-bar"><div class="quality-fill ${fechaOk > 80 ? 'quality-good' : (fechaOk > 50 ? 'quality-warning' : 'quality-bad')}" style="width: ${fechaOk}%"></div></div>
+                    </div>
+                </div>`;
+
+            const issues = [];
+            if (stats.sinCorreo > 0) issues.push(`<div class="issue-item p-2 rounded-lg bg-orange-50 text-orange-700 flex items-center gap-2"><i class="fas fa-envelope-slash"></i><span class="font-semibold">${stats.sinCorreo}</span> sin correo</div>`);
+            if (stats.duplicados > 0) issues.push(`<div class="issue-item p-2 rounded-lg bg-red-50 text-red-700 flex items-center gap-2"><i class="fas fa-clone"></i><span class="font-semibold">${stats.duplicados}</span> duplicados</div>`);
+            if (stats.pendientes > 0) issues.push(`<div class="issue-item p-2 rounded-lg bg-amber-50 text-amber-700 flex items-center gap-2"><i class="fas fa-clock"></i><span class="font-semibold">${stats.pendientes}</span> pendientes</div>`);
+
+            issuesContainer.innerHTML = issues.length > 0 ? issues.join('') : '<div class="p-3 rounded-lg bg-green-50 text-green-700 flex items-center gap-2"><i class="fas fa-check-circle"></i><span class="font-semibold">Todo OK</span></div>';
+        }
+
+        function updateCharts() {
+            Object.values(charts).forEach(chart => chart.destroy());
+
+            const ctxStatus = document.getElementById('chartStatus').getContext('2d');
+            charts.status = new Chart(ctxStatus, {
+                type: 'doughnut',
+                data: { labels: ['Confirmadas', 'Sin cita', 'Pendientes'], datasets: [{ data: [stats.confirmadas, stats.sinCita, stats.pendientes], backgroundColor: ['#10b981', '#9ca3af', '#f59e0b'], borderWidth: 0, hoverOffset: 4 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11, weight: 'bold' } } } }, cutout: '70%' }
+            });
+
+            const paises = Object.entries(stats.distribucionPais).sort((a, b) => b[1] - a[1]);
+            const ctxCountries = document.getElementById('chartCountries').getContext('2d');
+            charts.countries = new Chart(ctxCountries, {
+                type: 'bar',
+                data: { labels: paises.map(p => p[0]), datasets: [{ label: 'Clientes', data: paises.map(p => p[1]), backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'], borderRadius: 6, borderSkipped: false }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1, font: { weight: 'bold' } }, grid: { display: false } }, x: { grid: { display: false }, ticks: { font: { size: 10, weight: 'bold' } } } } }
+            });
+
+            const motivos = Object.entries(stats.distribucionMotivo).sort((a, b) => b[1] - a[1]);
+            const ctxMotives = document.getElementById('chartMotives').getContext('2d');
+            charts.motives = new Chart(ctxMotives, {
+                type: 'pie',
+                data: { labels: motivos.map(m => m[0].length > 15 ? m[0].substring(0, 15) + '...' : m[0]), datasets: [{ data: motivos.map(m => m[1]), backgroundColor: ['#667eea', '#10b981', '#f59e0b', '#ef4444'], borderWidth: 2, borderColor: '#fff' }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10, weight: 'bold' } } } } }
+            });
+
+            const fechasPorDia = {};
+            dashboardData.forEach(d => { if (d.fecha_parseada) { const fecha = d.fecha_parseada.split(' ')[0]; fechasPorDia[fecha] = (fechasPorDia[fecha] || 0) + 1; } });
+            const fechasOrdenadas = Object.entries(fechasPorDia).sort((a, b) => new Date(a[0]) - new Date(b[0]));
+            const ctxTimeline = document.getElementById('chartTimeline').getContext('2d');
+            charts.timeline = new Chart(ctxTimeline, {
+                type: 'line',
+                data: { labels: fechasOrdenadas.map(f => new Date(f[0]).toLocaleDateString('es-ES', {day: 'numeric', month: 'short'})), datasets: [{ label: 'Citas', data: fechasOrdenadas.map(f => f[1]), borderColor: '#667eea', backgroundColor: 'rgba(102, 126, 234, 0.1)', fill: true, tension: 0.4, pointBackgroundColor: '#667eea', pointBorderColor: '#fff', pointBorderWidth: 2, pointRadius: 5, pointHoverRadius: 7 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1, font: { weight: 'bold' } }, grid: { color: 'rgba(0,0,0,0.05)' } }, x: { grid: { display: false }, ticks: { font: { size: 10, weight: 'bold' } } } } }
+            });
+        }
+
+        function populateFilters() {
+            const paises = [...new Set(dashboardData.map(d => d.pais).filter(Boolean))].sort();
+            const motivos = [...new Set(dashboardData.map(d => d.motivo).filter(Boolean))].sort();
+
+            const paisSelect = document.getElementById('filterPais');
+            const motivoSelect = document.getElementById('filterMotivo');
+
+            paisSelect.innerHTML = '<option value="">Todos los países</option>';
+            motivoSelect.innerHTML = '<option value="">Todos los motivos</option>';
+
+            paises.forEach(pais => { paisSelect.innerHTML += `<option value="${pais}">${pais}</option>`; });
+            motivos.forEach(motivo => { motivoSelect.innerHTML += `<option value="${motivo}">${motivo}</option>`; });
+        }
+
+        function updateClientsTable() {
+            const tbody = document.getElementById('clientsTableBody');
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageData = filteredData.slice(start, end);
+
+            if (pageData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="py-12 text-center text-gray-400"><i class="fas fa-inbox text-4xl mb-3"></i><p>No hay registros que coincidan</p></td></tr>`;
+                document.getElementById('tableInfo').textContent = 'Mostrando 0 de 0 registros';
+                return;
+            }
+
+            tbody.innerHTML = pageData.map(client => {
+                const isDuplicate = client.esDuplicado;
+                let fechaDisplay = '-', fechaClass = '';
+                if (client.fecha_parseada) {
+                    const fDate = new Date(client.fecha_parseada);
+                    const now = new Date();
+                    fechaDisplay = fDate.toLocaleString('es-ES', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+                    if (fDate < now) fechaClass = 'text-gray-400';
+                    else if (fDate.toDateString() === now.toDateString()) fechaClass = 'text-green-600 font-bold';
+                    else fechaClass = 'text-blue-600 font-semibold';
+                }
+
+                return `<tr class="table-row ${isDuplicate ? 'duplicate-row' : ''}">
+                    <td class="p-4">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold">${client.nombre ? client.nombre.charAt(0).toUpperCase() : '?'}</div>
+                            <span class="font-bold text-gray-800">${client.nombre || '<span class="text-red-400 italic">Sin nombre</span>'}</span>
+                            ${isDuplicate ? '<span class="duplicate-badge text-xs">Duplicado</span>' : ''}
+                        </div>
+                    </td>
+                    <td class="p-4">
+                        <div class="text-sm space-y-1">
+                            <div class="flex items-center gap-2 ${client.telefonoStatus === 'ok' ? 'text-gray-700' : 'text-orange-600'}">
+                                <i class="fas fa-phone text-xs ${client.telefonoStatus === 'ok' ? 'text-green-500' : 'text-orange-500'}"></i>
+                                <span class="font-mono">${client.telefonoNormalizado || client.telefono || '-'}</span>
+                            </div>
+                            <div class="flex items-center gap-2 ${client.correo ? 'text-gray-600' : 'text-red-400'}">
+                                <i class="fas fa-envelope text-xs ${client.correo ? 'text-blue-400' : 'text-red-400'}"></i>
+                                <span class="text-xs">${client.correo || 'Sin correo'}</span>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="p-4">${client.pais ? `<span class="px-3 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold"><i class="fas fa-globe mr-1"></i>${client.pais}</span>` : '-'}</td>
+                    <td class="p-4">${client.motivo ? `<span class="px-3 py-1 rounded-lg bg-purple-50 text-purple-700 text-xs font-bold">${client.motivo}</span>` : '<span class="text-gray-400 text-xs">Sin motivo</span>'}</td>
+                    <td class="p-4 text-sm ${fechaClass}">${fechaDisplay}</td>
+                    <td class="p-4">${client.cita_confirmada ? '<span class="status-badge status-confirmed"><i class="fas fa-check mr-1"></i>Confirmada</span>' : (client.fecha_cita ? '<span class="status-badge status-pending"><i class="fas fa-clock mr-1"></i>Pendiente</span>' : '<span class="status-badge status-empty"><i class="fas fa-times mr-1"></i>Sin cita</span>')}</td>
+                    <td class="p-4">
+                        <div class="flex gap-2">
+                            ${!client.correo ? '<i class="fas fa-envelope-slash text-red-400" title="Sin correo"></i>' : ''}
+                            ${!client.motivo ? '<i class="fas fa-question-circle text-amber-400" title="Sin motivo"></i>' : ''}
+                            ${client.esDuplicado ? '<i class="fas fa-clone text-red-500" title="Duplicado"></i>' : ''}
+                            ${client.booking_uid ? '<i class="fas fa-ticket-alt text-blue-400" title="Con booking"></i>' : ''}
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            document.getElementById('tableInfo').textContent = `Mostrando ${Math.min(filteredData.length, start + 1)}-${Math.min(end, filteredData.length)} de ${filteredData.length} registros`;
+            document.getElementById('pageInfo').textContent = `Página ${currentPage} de ${Math.max(1, Math.ceil(filteredData.length / itemsPerPage))}`;
+            document.getElementById('btnPrev').disabled = currentPage === 1;
+            document.getElementById('btnNext').disabled = end >= filteredData.length;
+        }
+
+        function changePage(direction) {
+            const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+            currentPage += direction;
+            if (currentPage < 1) currentPage = 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            updateClientsTable();
+        }
+    </script>
+</body>
+</html>
